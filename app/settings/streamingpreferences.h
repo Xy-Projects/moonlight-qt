@@ -143,7 +143,9 @@ public:
     Q_PROPERTY(bool swapFaceButtons MEMBER swapFaceButtons NOTIFY swapFaceButtonsChanged)
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
-    Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
+    Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged)
+    Q_PROPERTY(bool cidrEnable MEMBER cidrEnable NOTIFY cidrEnableChanged)
+    Q_PROPERTY(QString cidrRanges MEMBER cidrRanges NOTIFY cidrRangesChanged)
 
     Q_INVOKABLE bool retranslate();
 
@@ -185,6 +187,8 @@ public:
     UIDisplayMode uiDisplayMode;
     Language language;
     CaptureSysKeysMode captureSysKeysMode;
+    bool cidrEnable;
+    QString cidrRanges;
 
 signals:
     void displayModeChanged();
@@ -221,6 +225,8 @@ signals:
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void languageChanged();
+    void cidrEnableChanged();
+    void cidrRangesChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);

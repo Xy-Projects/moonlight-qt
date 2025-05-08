@@ -228,9 +228,15 @@ public:
 
     Q_INVOKABLE void addNewHostManually(QString address);
 
-    void addNewHost(NvAddress address, bool mdns, NvAddress mdnsIpv6Address = NvAddress());
+    Q_INVOKABLE void addNewHostSilently(QString address);
+
+    void addNewHost(NvAddress address, bool mdns, bool cidr, NvAddress mdnsIpv6Address = NvAddress());
 
     QString generatePinString();
+
+    Q_INVOKABLE QStringList cidrIpList(const QString& cidr);
+
+    Q_INVOKABLE QString toCIDR(const QString& text);
 
     void pairHost(NvComputer* computer, QString pin);
 

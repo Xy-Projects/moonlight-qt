@@ -356,18 +356,27 @@ void ComputerManager::startPolling()
         // Start an MDNS query for GameStream hosts
         m_MdnsServer.reset(new QMdnsEngine::Server());
         m_MdnsBrowser = new QMdnsEngine::Browser(m_MdnsServer.data(), "_nvstream._tcp.local.");
-        connect(m_MdnsBrowser, &QMdnsEngine::Browser::serviceAdded,
-                this, [this](const QMdnsEngine::Service& service) {
+        connect(m_MdnsBrowser, &QMdnsEngine::Browser::serviceAdded, this, [this](const QMdnsEngine::Service& service) {
             qInfo() << "Discovered mDNS host:" << service.hostname();
 
             MdnsPendingComputer* pendingComputer = new MdnsPendingComputer(m_MdnsServer, service);
-            connect(pendingComputer, &MdnsPendingComputer::resolvedHost,
-                    this, &ComputerManager::handleMdnsServiceResolved);
+            connect(pendingComputer, &MdnsPendingComputer::resolvedHost, this, &ComputerManager::handleMdnsServiceResolved);
             m_PendingResolution.append(pendingComputer);
         });
     }
     else {
         qWarning() << "mDNS is disabled by user preference";
+    }
+
+    // Add the IP ranges
+    if (m_Prefs->cidrEnable) {
+        QStringList* ipList = new QStringList(ComputerManager::cidrIpList(m_Prefs->cidrRanges));
+        for (int i = 0; i < ipList->size(); i++) {
+            ComputerManager::addNewHostSilently(ipList->value(i));
+        }
+    }
+    else {
+        qWarning() << "CIDR ranges are disabled by user preference";
     }
 
     // Start polling threads for each known host
@@ -416,7 +425,7 @@ void ComputerManager::handleMdnsServiceResolved(MdnsPendingComputer* computer,
             // address may not be reachable (if the user hasn't installed the IPv6 helper yet
             // or if this host lacks outbound IPv6 capability). We want to add IPv6 even if
             // it's not currently reachable.
-            addNewHost(NvAddress(address, computer->port()), true, NvAddress(v6Global, computer->port()));
+            addNewHost(NvAddress(address, computer->port()), true, false, NvAddress(v6Global, computer->port()));
             added = true;
             break;
         }
@@ -430,7 +439,7 @@ void ComputerManager::handleMdnsServiceResolved(MdnsPendingComputer* computer,
                 if (address.isInSubnet(QHostAddress("fe80::"), 10) ||
                         address.isInSubnet(QHostAddress("fec0::"), 10) ||
                         address.isInSubnet(QHostAddress("fc00::"), 7)) {
-                    addNewHost(NvAddress(address, computer->port()), true, NvAddress(v6Global, computer->port()));
+                    addNewHost(NvAddress(address, computer->port()), true, false, NvAddress(v6Global, computer->port()));
                     break;
                 }
             }
@@ -713,10 +722,19 @@ void ComputerManager::addNewHostManually(QString address)
     QUrl url = QUrl::fromUserInput("moonlight://" + address);
     if (url.isValid() && !url.host().isEmpty() && url.scheme() == "moonlight") {
         // If there wasn't a port specified, use the default
-        addNewHost(NvAddress(url.host(), url.port(DEFAULT_HTTP_PORT)), false);
+        addNewHost(NvAddress(url.host(), url.port(DEFAULT_HTTP_PORT)), false, false);
     }
     else {
         emit computerAddCompleted(false, false);
+    }
+}
+
+void ComputerManager::addNewHostSilently(QString address)
+{
+    QUrl url = QUrl::fromUserInput("moonlight://" + address);
+    if (url.isValid() && !url.host().isEmpty() && url.scheme() == "moonlight") {
+        // If there wasn't a port specified, use the default
+        addNewHost(NvAddress(url.host(), url.port(DEFAULT_HTTP_PORT)), false, true);
     }
 }
 
@@ -725,11 +743,12 @@ class PendingAddTask : public QObject, public QRunnable
     Q_OBJECT
 
 public:
-    PendingAddTask(ComputerManager* computerManager, NvAddress address, NvAddress mdnsIpv6Address, bool mdns)
+    PendingAddTask(ComputerManager* computerManager, NvAddress address, NvAddress mdnsIpv6Address, bool mdns, bool cidr)
         : m_ComputerManager(computerManager),
           m_Address(address),
           m_MdnsIpv6Address(mdnsIpv6Address),
           m_Mdns(mdns),
+          m_CIDR(cidr),
           m_AboutToQuit(false)
     {
         connect(this, &PendingAddTask::computerAddCompleted,
@@ -766,7 +785,12 @@ private:
             // around this issue, we will issue the request again after a few seconds if
             // we see a ServiceUnavailableError error.
             try {
-                serverInfo = http.getServerInfo(NvHTTP::NVLL_VERBOSE);
+                if (m_CIDR) {
+                    serverInfo = http.getServerInfo(NvHTTP::NVLL_VERBOSE, true);
+                }
+                else {
+                    serverInfo = http.getServerInfo(NvHTTP::NVLL_VERBOSE, false);
+                }
             } catch (const QtNetworkReplyException& e) {
                 if (e.getError() == QNetworkReply::ServiceUnavailableError) {
                     qWarning() << "Retrying request in 5 seconds after ServiceUnavailableError";
@@ -781,7 +805,7 @@ private:
             }
             return serverInfo;
         } catch (...) {
-            if (!m_Mdns) {
+            if (!m_Mdns && !m_CIDR) {
                 unsigned int portTestResult;
 
                 if (m_ComputerManager->m_Prefs->detectNetworkBlocking) {
@@ -907,7 +931,7 @@ private:
                 m_ComputerManager->m_Lock.unlock();
 
                 // For non-mDNS clients, let them know it succeeded
-                if (!m_Mdns) {
+                if (!m_Mdns && !m_CIDR) {
                     emit computerAddCompleted(true, false);
                 }
 
@@ -929,7 +953,7 @@ private:
 
                 // If this wasn't added via mDNS but it is a RFC 1918 IPv4 address and not a VPN,
                 // go ahead and do the STUN request now to populate an external address.
-                if (!m_Mdns && addressIsSiteLocalV4 && newComputer->getActiveAddressReachability() != NvComputer::RI_VPN) {
+                if (!m_Mdns && !m_CIDR && addressIsSiteLocalV4 && newComputer->getActiveAddressReachability() != NvComputer::RI_VPN) {
                     quint32 addr;
                     int err = LiFindExternalAddressIP4("stun.moonlight-stream.org", 3478, &addr);
                     if (err == 0) {
@@ -941,7 +965,7 @@ private:
                 }
 
                 // For non-mDNS clients, let them know it succeeded
-                if (!m_Mdns) {
+                if (!m_Mdns && !m_CIDR) {
                     emit computerAddCompleted(true, false);
                 }
 
@@ -955,14 +979,15 @@ private:
     NvAddress m_Address;
     NvAddress m_MdnsIpv6Address;
     bool m_Mdns;
+    bool m_CIDR;
     bool m_AboutToQuit;
 };
 
-void ComputerManager::addNewHost(NvAddress address, bool mdns, NvAddress mdnsIpv6Address)
+void ComputerManager::addNewHost(NvAddress address, bool mdns, bool cidr, NvAddress mdnsIpv6Address)
 {
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for serverinfo query to complete
-    PendingAddTask* addTask = new PendingAddTask(this, address, mdnsIpv6Address, mdns);
+    PendingAddTask* addTask = new PendingAddTask(this, address, mdnsIpv6Address, mdns, cidr);
     QThreadPool::globalInstance()->start(addTask);
 }
 
@@ -974,6 +999,134 @@ QString ComputerManager::generatePinString()
     std::mt19937 engine(rd());
 
     return QString::asprintf("%04u", dist(engine));
+}
+
+// Make a QStringList of ip's from a CIDR defined range.
+QStringList ComputerManager::cidrIpList(const QString& cidr) {
+    QStringList result;
+
+    QStringList ranges = cidr.split(',');
+    for (int i_range = 0; i_range < ranges.size(); ++i_range) {
+        QString range = ranges[i_range].trimmed();
+
+        // CIDR style
+        if (range.contains('/')) {
+            QStringList splits = range.split('/');
+            if (splits.size() != 2) continue;
+
+            QHostAddress baseAddr(splits[0]);
+            quint32 base = baseAddr.toIPv4Address();
+
+            int prefix = splits[1].toInt();
+            int count = 1 << (32 - prefix);
+
+            for (int i_ip = 0; i_ip < count; ++i_ip) {
+                QHostAddress ip(base + i_ip);
+                result.append(ip.toString());
+            }
+        }
+        // '-' style
+        else if (range.contains('-')) {
+            QStringList splits = range.split('-');
+            if (splits.size() != 2) continue;
+
+            QHostAddress baseAddr(splits[0]);
+            quint32 base = baseAddr.toIPv4Address();
+            
+            QHostAddress lastAddr(splits[1]);
+            quint32 last = lastAddr.toIPv4Address();
+
+            int count = static_cast<int>(last - base);
+
+            for (int i_ip = 0; i_ip < count; ++i_ip) {
+                QHostAddress ip(base + i_ip);
+                result.append(ip.toString());
+            }
+        }
+        // individual ip's
+        else {
+            QHostAddress baseAddr(range);
+            result.append(baseAddr.toString());
+        }
+    }
+
+    return result;
+}
+
+// Convert '-' defined ip range to a QString in CIDR format.
+QString ComputerManager::toCIDR(const QString& text) {
+    QString result = text;
+
+    // Split commas to list
+    QStringList ranges;
+    if (result.contains(',')) {
+        ranges = text.split(',');
+    }
+    else {
+        ranges.append(text);
+    }
+
+    QStringList new_ranges;
+
+    for (int i_range = 0; i_range < ranges.size(); ++i_range) {
+        QString range = ranges[i_range].trimmed();
+
+        // Split '-' ranges
+        if (range.contains('-')) {
+            QStringList splits = range.split('-');
+            if (splits.size() != 2) continue;
+
+            QHostAddress baseAddr(splits[0]);
+            quint32 base = baseAddr.toIPv4Address();
+
+            QHostAddress lastAddr(splits[1]);
+            quint32 last = lastAddr.toIPv4Address();
+
+            int count = static_cast<int>(last - base);
+
+            QHostAddress subIP = baseAddr;
+            int subcount = count;
+            for (int i_prefix = 24; i_prefix < 33 && subcount > 0; i_prefix++) {
+                int remainder = subcount % (1 << (32 - i_prefix));
+                if (remainder < subcount) {
+                    QString temp_range = subIP.toString() + "/" + QString::number(i_prefix);
+                    new_ranges.append(temp_range);
+                    QHostAddress temp_ip(subIP.toIPv4Address() + (1 << (32 - i_prefix)));
+                    subIP = temp_ip;
+                    subcount = subcount - (1 << (32 - i_prefix));
+                }
+            }
+
+            /*result_range = new_ranges[0];
+            for (int i_new_range = 1; i_new_range < new_ranges.size(); i_new_range++) {
+                result_range = result_range + "," + new_ranges[i_new_range];
+            }
+
+            result.replace(range, result_range);*/
+        }
+        // Assume CIDR ranges are good
+        else if (range.contains('/')) {
+            new_ranges.append(range);
+        }
+        // Assume anything with a '.' is an IP
+        else if (range.contains('.')) {
+            new_ranges.append(range + "/32");
+        }
+        // Flag everything else
+        else if (range.length() > 0) {
+            //result.replace(range, "BAD");
+        }
+    }
+
+    // Delete BAD flags
+    /*if (result.contains("BAD")) {
+        result.replace(",BAD", "");
+        result.replace("BAD,", "");
+        result.replace("BAD", "");
+    }*/
+
+    result = new_ranges.join(',');
+    return result;
 }
 
 #include "computermanager.moc"

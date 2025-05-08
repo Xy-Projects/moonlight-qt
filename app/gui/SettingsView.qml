@@ -1504,6 +1504,111 @@ Flickable {
         }
 
         GroupBox {
+            id: networkSettingsGroupBox
+            width: (parent.width - (parent.leftPadding + parent.rightPadding))
+            padding: 12
+            title: "<font color=\"skyblue\">" + qsTr("Network Settings") + "</font>"
+            font.pointSize: 12
+
+            Column {
+                anchors.fill: parent
+                spacing: 5
+
+                CheckBox {
+                    id: detectNetworkBlocking
+                    width: parent.width
+                    text: qsTr("Automatically detect blocked connections (Recommended)")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.detectNetworkBlocking
+                    onCheckedChanged: {
+                        StreamingPreferences.detectNetworkBlocking = checked
+                    }
+                }
+
+                CheckBox {
+                    id: enableMdns
+                    width: parent.width
+                    text: qsTr("Automatically find PCs via mDNS (Recommended)")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.enableMdns
+                    onCheckedChanged: {
+                        // This is called on init, so only do the work if we've
+                        // actually changed the value.
+                        if (StreamingPreferences.enableMdns != checked) {
+                            StreamingPreferences.enableMdns = checked
+
+                            // Restart polling so the mDNS change takes effect
+                            if (window.pollingActive) {
+                                ComputerManager.stopPollingAsync()
+                                ComputerManager.startPolling()
+                            }
+                        }
+                    }
+                }
+
+                CheckBox {
+                    id: cidrEnable
+                    width: parent.width
+                    text: qsTr("Set a custom set of IP search ranges via CIDR")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.cidrEnable
+                    onCheckedChanged: {
+                        // This is called on init, so only do the work if we've
+                        // actually changed the value.
+                        if (StreamingPreferences.cidrEnable != checked) {
+                            StreamingPreferences.cidrEnable = checked
+
+                            // Restart polling so the change takes effect
+                            if (window.pollingActive) {
+                                ComputerManager.stopPollingAsync()
+                                ComputerManager.startPolling()
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    width: parent.width
+                    id: cidrRangesTitle
+                    text: qsTr("CIDR IP Ranges")
+                    visible: StreamingPreferences.cidrEnable
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                TextField {
+                    id: cidrRanges
+                    width: parent.width
+                    text: StreamingPreferences.cidrRanges
+                    visible: StreamingPreferences.cidrEnable
+                    focus: false
+
+                    onAccepted: {
+                        if (cidrRanges.text) {
+                            var iplist = ComputerManager.toCIDR(cidrRanges.text.trim());
+                            if (iplist) {
+                                StreamingPreferences.cidrRanges = iplist
+
+                                // Restart polling so the change takes effect
+                                if (window.pollingActive) {
+                                    ComputerManager.stopPollingAsync()
+                                    ComputerManager.startPolling()
+                                }
+                            }
+                            else{
+                                cidrRanges.text = StreamingPreferences.cidrRanges
+                            }
+                            
+                        }
+                        else {
+                            cidrRanges.text = StreamingPreferences.cidrRanges
+                        }
+                    }
+                }
+            }
+        }
+
+        GroupBox {
             id: advancedSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
             padding: 12
@@ -1689,38 +1794,6 @@ Flickable {
                     ToolTip.timeout: 5000
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("This unlocks extremely high video bitrates for use with Sunshine hosts. It should only be used when streaming over an Ethernet LAN connection.")
-                }
-
-                CheckBox {
-                    id: enableMdns
-                    width: parent.width
-                    text: qsTr("Automatically find PCs on the local network (Recommended)")
-                    font.pointSize: 12
-                    checked: StreamingPreferences.enableMdns
-                    onCheckedChanged: {
-                        // This is called on init, so only do the work if we've
-                        // actually changed the value.
-                        if (StreamingPreferences.enableMdns != checked) {
-                            StreamingPreferences.enableMdns = checked
-
-                            // Restart polling so the mDNS change takes effect
-                            if (window.pollingActive) {
-                                ComputerManager.stopPollingAsync()
-                                ComputerManager.startPolling()
-                            }
-                        }
-                    }
-                }
-
-                CheckBox {
-                    id: detectNetworkBlocking
-                    width: parent.width
-                    text: qsTr("Automatically detect blocked connections (Recommended)")
-                    font.pointSize: 12
-                    checked: StreamingPreferences.detectNetworkBlocking
-                    onCheckedChanged: {
-                        StreamingPreferences.detectNetworkBlocking = checked
-                    }
                 }
 
                 CheckBox {
