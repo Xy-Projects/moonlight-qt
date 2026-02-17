@@ -51,6 +51,10 @@
 #define SER_CAPTURESYSKEYS "capturesyskeys"
 #define SER_KEEPAWAKE "keepawake"
 #define SER_LANGUAGE "language"
+#define SER_COORD_ENABLED "coord_enabled"
+#define SER_COORD_SERVER "coord_server"
+#define SER_COORD_TOKEN "coord_token"
+#define SER_COORD_CLIENT_NAME "coord_client_name"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -168,6 +172,10 @@ void StreamingPreferences::reload()
                                                                                                                  : UIDisplayMode::UI_MAXIMIZED)).toInt());
     language = static_cast<Language>(settings.value(SER_LANGUAGE,
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
+    enableCoordination = settings.value(SER_COORD_ENABLED, false).toBool();
+    coordinationServerUrl = settings.value(SER_COORD_SERVER, "").toString();
+    coordinationAuthToken = settings.value(SER_COORD_TOKEN, "").toString();
+    coordinationClientName = settings.value(SER_COORD_CLIENT_NAME, "").toString();
 
 
     // Perform default settings updates as required based on last default version
@@ -358,6 +366,10 @@ void StreamingPreferences::save()
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_COORD_ENABLED, enableCoordination);
+    settings.setValue(SER_COORD_SERVER, coordinationServerUrl);
+    settings.setValue(SER_COORD_TOKEN, coordinationAuthToken);
+    settings.setValue(SER_COORD_CLIENT_NAME, coordinationClientName);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)

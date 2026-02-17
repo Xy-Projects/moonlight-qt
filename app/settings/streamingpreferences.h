@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QRect>
 #include <QQmlEngine>
+#include <QString>
 
 class StreamingPreferences : public QObject
 {
@@ -145,6 +146,10 @@ public:
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
+    Q_PROPERTY(bool enableCoordination MEMBER enableCoordination NOTIFY enableCoordinationChanged)
+    Q_PROPERTY(QString coordinationServerUrl MEMBER coordinationServerUrl NOTIFY coordinationServerUrlChanged)
+    Q_PROPERTY(QString coordinationAuthToken MEMBER coordinationAuthToken NOTIFY coordinationAuthTokenChanged)
+    Q_PROPERTY(QString coordinationClientName MEMBER coordinationClientName NOTIFY coordinationClientNameChanged)
 
     Q_INVOKABLE bool retranslate();
 
@@ -187,6 +192,10 @@ public:
     UIDisplayMode uiDisplayMode;
     Language language;
     CaptureSysKeysMode captureSysKeysMode;
+    bool enableCoordination;
+    QString coordinationServerUrl;
+    QString coordinationAuthToken;
+    QString coordinationClientName;
 
 signals:
     void displayModeChanged();
@@ -224,6 +233,10 @@ signals:
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void languageChanged();
+    void enableCoordinationChanged();
+    void coordinationServerUrlChanged();
+    void coordinationAuthTokenChanged();
+    void coordinationClientNameChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);

@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QMutex>
 #include <QWaitCondition>
+#include <QSet>
 
 class ComputerManager;
 
@@ -226,6 +227,7 @@ public:
     Q_INVOKABLE void stopPollingAsync();
 
     Q_INVOKABLE void addNewHostManually(QString address);
+    Q_INVOKABLE void syncCoordinationHosts();
 
     void addNewHost(NvAddress address, bool mdns, QString name = QString(), NvAddress mdnsIpv6Address = NvAddress());
 
@@ -252,6 +254,7 @@ signals:
     void computerAddCompleted(QVariant success, QVariant detectedPortBlocking);
 
     void quitAppCompleted(QVariant error);
+    void coordinationSyncCompleted(QVariant error);
 
 private slots:
     void handleAboutToQuit();
@@ -268,6 +271,9 @@ private:
     QHostAddress getBestGlobalAddressV6(QVector<QHostAddress>& addresses);
 
     void startPollingComputer(NvComputer* computer);
+    void maybeAttemptCoordinationPair(NvComputer* computer);
+    QString coordDeviceIdForComputer(const NvComputer* computer) const;
+    static QString coordHostKey(const QString& host, quint16 port);
 
     StreamingPreferences* m_Prefs;
     int m_PollingRef;
@@ -283,4 +289,6 @@ private:
     QMutex m_DelayedFlushMutex; // Lock ordering: Must never be acquired while holding NvComputer lock
     QWaitCondition m_DelayedFlushCondition;
     bool m_NeedsDelayedFlush;
+    QMap<QString, QString> m_CoordHostToDeviceId;
+    QSet<QString> m_CoordPairInProgress;
 };

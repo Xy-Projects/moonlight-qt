@@ -10,6 +10,17 @@
 #include <QThreadPool>
 #include <QCoreApplication>
 #include <QRandomGenerator>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QUrl>
+#include <QEventLoop>
+#include <QHostInfo>
+#include <QRegularExpression>
+#include <utility>
 
 #define SER_HOSTS "hosts"
 #define SER_HOSTS_BACKUP "hostsbackup"
@@ -198,6 +209,10 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
     // while quitting, however this is a one time signal - additional
     // requests would not be aborted and block termination.
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &ComputerManager::handleAboutToQuit);
+    connect(this, &ComputerManager::pairingCompleted, this, [this](NvComputer* computer, QString) {
+        QWriteLocker lock(&m_Lock);
+        m_CoordPairInProgress.remove(computer->uuid);
+    });
 }
 
 ComputerManager::~ComputerManager()
@@ -390,6 +405,10 @@ void ComputerManager::startPolling()
         i.next();
         startPollingComputer(i.value());
     }
+
+    if (m_Prefs->enableCoordination) {
+        syncCoordinationHosts();
+    }
 }
 
 // Must hold m_Lock for write
@@ -483,6 +502,8 @@ void ComputerManager::handleComputerStateChanged(NvComputer* computer)
 
     // Save updates to this host
     saveHost(computer);
+
+    maybeAttemptCoordinationPair(computer);
 }
 
 QVector<NvComputer*> ComputerManager::getComputers()
@@ -999,6 +1020,266 @@ void ComputerManager::addNewHost(NvAddress address, bool mdns, QString name, NvA
     // UI while waiting for serverinfo query to complete
     PendingAddTask* addTask = new PendingAddTask(this, name, address, mdnsIpv6Address, mdns);
     QThreadPool::globalInstance()->start(addTask);
+}
+
+class PendingCoordSyncTask : public QObject, public QRunnable
+{
+    Q_OBJECT
+
+public:
+    PendingCoordSyncTask(QString serverUrl, QString authToken)
+        : m_ServerUrl(std::move(serverUrl)),
+          m_AuthToken(std::move(authToken))
+    {
+    }
+
+signals:
+    void coordHostDiscovered(QString name, QString host, quint16 port, QString deviceId);
+    void coordSyncCompleted(QString error);
+
+private:
+    void run() override
+    {
+        QNetworkAccessManager nam;
+        QNetworkRequest request(QUrl(m_ServerUrl + "/v1/devices"));
+        request.setRawHeader("Authorization", QString("Bearer %1").arg(m_AuthToken).toUtf8());
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+        QNetworkReply* reply = nam.get(request);
+        QEventLoop waitLoop;
+        connect(reply, &QNetworkReply::finished, &waitLoop, &QEventLoop::quit);
+        waitLoop.exec();
+
+        QByteArray body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            emit coordSyncCompleted(tr("Coordination sync failed: %1").arg(reply->errorString()));
+            reply->deleteLater();
+            return;
+        }
+        reply->deleteLater();
+
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+            emit coordSyncCompleted(tr("Coordination sync returned invalid JSON"));
+            return;
+        }
+
+        const QJsonArray devices = doc.array();
+        for (const QJsonValue& value : devices) {
+            if (!value.isObject()) {
+                continue;
+            }
+
+            QJsonObject obj = value.toObject();
+            const QString role = obj.value("role").toString();
+            if (role == "moonlight_client") {
+                continue;
+            }
+
+            const QString sunshineUrl = obj.value("sunshine_url").toString();
+            const QString deviceId = obj.value("id").toString();
+            const QString deviceName = obj.value("device_name").toString();
+            if (sunshineUrl.isEmpty() || deviceId.isEmpty()) {
+                continue;
+            }
+
+            QUrl parsed = QUrl::fromUserInput(sunshineUrl);
+            if (!parsed.isValid() || parsed.host().isEmpty()) {
+                continue;
+            }
+
+            emit coordHostDiscovered(deviceName, parsed.host(), static_cast<quint16>(parsed.port(DEFAULT_HTTP_PORT)), deviceId);
+        }
+
+        emit coordSyncCompleted(QString());
+    }
+
+    QString m_ServerUrl;
+    QString m_AuthToken;
+};
+
+class PendingCoordPairTask : public QObject, public QRunnable
+{
+    Q_OBJECT
+
+public:
+    PendingCoordPairTask(QString serverUrl,
+                         QString authToken,
+                         QString targetDeviceId,
+                         QString clientName,
+                         QString pin)
+        : m_ServerUrl(std::move(serverUrl)),
+          m_AuthToken(std::move(authToken)),
+          m_TargetDeviceId(std::move(targetDeviceId)),
+          m_ClientName(std::move(clientName)),
+          m_Pin(std::move(pin))
+    {
+    }
+
+signals:
+    void pairRequestQueued(QString error);
+
+private:
+    void run() override
+    {
+        QNetworkAccessManager nam;
+        QNetworkRequest request(QUrl(m_ServerUrl + "/v1/pair/request"));
+        request.setRawHeader("Authorization", QString("Bearer %1").arg(m_AuthToken).toUtf8());
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+        QJsonObject payload{
+            {"target_device_id", m_TargetDeviceId},
+            {"client_device_name", m_ClientName},
+            {"client_pin", m_Pin},
+        };
+
+        QNetworkReply* reply = nam.post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
+        QEventLoop waitLoop;
+        connect(reply, &QNetworkReply::finished, &waitLoop, &QEventLoop::quit);
+        waitLoop.exec();
+
+        QByteArray body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            emit pairRequestQueued(tr("Coordination pair request failed: %1").arg(reply->errorString()));
+            reply->deleteLater();
+            return;
+        }
+
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        reply->deleteLater();
+        if (statusCode != 201) {
+            emit pairRequestQueued(tr("Coordination pair request failed with HTTP %1: %2")
+                                   .arg(statusCode)
+                                   .arg(QString::fromUtf8(body)));
+            return;
+        }
+
+        emit pairRequestQueued(QString());
+    }
+
+    QString m_ServerUrl;
+    QString m_AuthToken;
+    QString m_TargetDeviceId;
+    QString m_ClientName;
+    QString m_Pin;
+};
+
+QString ComputerManager::coordHostKey(const QString& host, quint16 port)
+{
+    return host.trimmed().toLower() + ":" + QString::number(port);
+}
+
+QString ComputerManager::coordDeviceIdForComputer(const NvComputer* computer) const
+{
+    QReadLocker computerLock(&computer->lock);
+    const QVector<NvAddress> candidates = {
+        computer->activeAddress,
+        computer->manualAddress,
+        computer->localAddress,
+        computer->remoteAddress,
+        computer->ipv6Address,
+    };
+
+    for (const NvAddress& address : candidates) {
+        if (address.isNull()) {
+            continue;
+        }
+
+        const QString key = coordHostKey(address.address(), address.port());
+        if (m_CoordHostToDeviceId.contains(key)) {
+            return m_CoordHostToDeviceId.value(key);
+        }
+    }
+
+    return QString();
+}
+
+void ComputerManager::syncCoordinationHosts()
+{
+    const QString serverUrl = m_Prefs->coordinationServerUrl.trimmed().trimmed().remove(QRegularExpression("/+$"));
+    const QString authToken = m_Prefs->coordinationAuthToken.trimmed();
+
+    if (!m_Prefs->enableCoordination || serverUrl.isEmpty() || authToken.isEmpty()) {
+        emit coordinationSyncCompleted(tr("Coordination server URL and token are required"));
+        return;
+    }
+
+    PendingCoordSyncTask* task = new PendingCoordSyncTask(serverUrl, authToken);
+    connect(task, &PendingCoordSyncTask::coordHostDiscovered, this,
+            [this](QString name, QString host, quint16 port, QString deviceId) {
+        {
+            QWriteLocker lock(&m_Lock);
+            m_CoordHostToDeviceId.insert(coordHostKey(host, port), deviceId);
+        }
+        addNewHost(NvAddress(host, port), false, name);
+    });
+    connect(task, &PendingCoordSyncTask::coordSyncCompleted, this,
+            [this](QString error) {
+        emit coordinationSyncCompleted(error);
+    });
+    QThreadPool::globalInstance()->start(task);
+}
+
+void ComputerManager::maybeAttemptCoordinationPair(NvComputer* computer)
+{
+    if (!m_Prefs->enableCoordination) {
+        return;
+    }
+
+    QString computerUuid;
+    bool online = false;
+    bool paired = false;
+    {
+        QReadLocker lock(&computer->lock);
+        computerUuid = computer->uuid;
+        online = computer->state == NvComputer::CS_ONLINE;
+        paired = computer->pairState == NvComputer::PS_PAIRED;
+    }
+
+    if (!online || paired) {
+        return;
+    }
+
+    QString deviceId;
+    {
+        QWriteLocker lock(&m_Lock);
+        if (m_CoordPairInProgress.contains(computerUuid)) {
+            return;
+        }
+
+        deviceId = coordDeviceIdForComputer(computer);
+        if (deviceId.isEmpty()) {
+            return;
+        }
+
+        m_CoordPairInProgress.insert(computerUuid);
+    }
+
+    QString clientName = m_Prefs->coordinationClientName.trimmed();
+    if (clientName.isEmpty()) {
+        clientName = QHostInfo::localHostName();
+    }
+
+    const QString pin = generatePinString();
+    const QString serverUrl = m_Prefs->coordinationServerUrl.trimmed().trimmed().remove(QRegularExpression("/+$"));
+    const QString authToken = m_Prefs->coordinationAuthToken.trimmed();
+
+    PendingCoordPairTask* task = new PendingCoordPairTask(serverUrl, authToken, deviceId, clientName, pin);
+    connect(task, &PendingCoordPairTask::pairRequestQueued, this,
+            [this, computer, pin](QString error) {
+        if (!error.isEmpty()) {
+            {
+                QWriteLocker lock(&m_Lock);
+                m_CoordPairInProgress.remove(computer->uuid);
+            }
+            emit pairingCompleted(computer, error);
+            return;
+        }
+
+        pairHost(computer, pin);
+    });
+    QThreadPool::globalInstance()->start(task);
 }
 
 QString ComputerManager::generatePinString()

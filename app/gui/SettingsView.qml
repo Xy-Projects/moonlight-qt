@@ -11,6 +11,7 @@ import SystemProperties 1.0
 Flickable {
     id: settingsPage
     objectName: qsTr("Settings")
+    property string coordinationSyncStatus: ""
 
     signal languageChanged()
 
@@ -73,6 +74,7 @@ Flickable {
         // This enables Tab and BackTab based navigation rather than arrow keys.
         // It is required to shift focus between controls on the settings page.
         SdlGamepadKeyNavigation.setUiNavMode(true)
+        ComputerManager.coordinationSyncCompleted.connect(handleCoordinationSyncCompleted)
 
         // Highlight the first item if a gamepad is connected
         if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
@@ -82,6 +84,7 @@ Flickable {
 
     StackView.onDeactivating: {
         SdlGamepadKeyNavigation.setUiNavMode(false)
+        ComputerManager.coordinationSyncCompleted.disconnect(handleCoordinationSyncCompleted)
 
         // Save the prefs so the Session can observe the changes
         StreamingPreferences.save()
@@ -91,6 +94,14 @@ Flickable {
         // Also save preferences on destruction, since we won't get a
         // deactivating callback if the user just closes Moonlight
         StreamingPreferences.save()
+    }
+
+    function handleCoordinationSyncCompleted(error) {
+        if (error === undefined || error === null || error === "") {
+            coordinationSyncStatus = qsTr("Coordination sync completed.")
+        } else {
+            coordinationSyncStatus = error
+        }
     }
 
     Column {
@@ -1750,6 +1761,63 @@ Flickable {
                     ToolTip.text: qsTr("Display real-time stream performance information while streaming.") + "\n\n" +
                                   qsTr("You can toggle it at any time while streaming using Ctrl+Alt+Shift+S or Select+L1+R1+X.") + "\n\n" +
                                   qsTr("The performance overlay is not supported on Steam Link or Raspberry Pi.")
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Coordination Server (Experimental)")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                CheckBox {
+                    id: enableCoordination
+                    width: parent.width
+                    text: qsTr("Enable account-based host sync and auto-pair")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.enableCoordination
+                    onCheckedChanged: {
+                        StreamingPreferences.enableCoordination = checked
+                    }
+                }
+
+                TextField {
+                    width: parent.width
+                    placeholderText: qsTr("Coordination server URL (for example: http://127.0.0.1:8787)")
+                    text: StreamingPreferences.coordinationServerUrl
+                    enabled: enableCoordination.checked
+                    onTextChanged: StreamingPreferences.coordinationServerUrl = text
+                }
+
+                TextField {
+                    width: parent.width
+                    placeholderText: qsTr("Coordination auth token")
+                    text: StreamingPreferences.coordinationAuthToken
+                    enabled: enableCoordination.checked
+                    echoMode: TextInput.PasswordEchoOnEdit
+                    onTextChanged: StreamingPreferences.coordinationAuthToken = text
+                }
+
+                TextField {
+                    width: parent.width
+                    placeholderText: qsTr("Client name shown to host")
+                    text: StreamingPreferences.coordinationClientName
+                    enabled: enableCoordination.checked
+                    onTextChanged: StreamingPreferences.coordinationClientName = text
+                }
+
+                Button {
+                    text: qsTr("Sync hosts now")
+                    enabled: enableCoordination.checked
+                    onClicked: ComputerManager.syncCoordinationHosts()
+                }
+
+                Label {
+                    width: parent.width
+                    text: settingsPage.coordinationSyncStatus
+                    visible: text.length > 0
+                    wrapMode: Text.Wrap
+                    font.pointSize: 9
                 }
             }
         }
