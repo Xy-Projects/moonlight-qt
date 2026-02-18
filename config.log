@@ -1,0 +1,14 @@
+executing config test SL
++ cd /d C:\Git\XyShine\moonlight-qt\config.tests\SL && C:\Qt\6.9.2\llvm-mingw_64\bin\qmake.exe  -spec C:/Qt/6.9.2/llvm-mingw_64/mkspecs/win32-clang-g++ "CONFIG -= qt debug_and_release app_bundle lib_bundle" C:/Git/XyShine/moonlight-qt/config.tests/SL
++ cd /d C:\Git\XyShine\moonlight-qt\config.tests\SL && set MAKEFLAGS=& mingw32-make
+> clang++ -c -O2 -Wall -Wextra -Wextra -Wno-ignored-attributes -fexceptions -DUNICODE -D_UNICODE -DWIN32 -DMINGW_HAS_SECURE_API=1 -I. -IC:/Qt/6.9.2/llvm-mingw_64/mkspecs/win32-clang-g++  -o main.o main.cpp
+> main.cpp:1:10: fatal error: 'SLVideo.h' file not found
+>     1 | #include <SLVideo.h>
+>       |          ^~~~~~~~~~~
+> 1 error generated.
+> mingw32-make: *** [Makefile:750: main.o] Error 1
+test SL FAILED
+executing config test EGL
++ cd /d C:\Git\XyShine\moonlight-qt\config.tests\EGL && C:\Qt\6.9.2\llvm-mingw_64\bin\qmake.exe  -spec C:/Qt/6.9.2/llvm-mingw_64/mkspecs/win32-clang-g++ "CONFIG -= qt debug_and_release app_bundle lib_bundle" C:/Git/XyShine/moonlight-qt/config.tests/EGL
+> Project ERROR: sdl2 development package not found
+test EGL FAILED

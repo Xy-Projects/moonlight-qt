@@ -1791,11 +1791,19 @@ Flickable {
 
                 TextField {
                     width: parent.width
-                    placeholderText: qsTr("Coordination auth token")
-                    text: StreamingPreferences.coordinationAuthToken
+                    placeholderText: qsTr("Coordination account email")
+                    text: StreamingPreferences.coordinationEmail
                     enabled: enableCoordination.checked
-                    echoMode: TextInput.PasswordEchoOnEdit
-                    onTextChanged: StreamingPreferences.coordinationAuthToken = text
+                    onTextChanged: StreamingPreferences.coordinationEmail = text
+                }
+
+                TextField {
+                    width: parent.width
+                    placeholderText: qsTr("Coordination account password")
+                    text: StreamingPreferences.coordinationPassword
+                    enabled: enableCoordination.checked
+                    echoMode: TextInput.Password
+                    onTextChanged: StreamingPreferences.coordinationPassword = text
                 }
 
                 TextField {

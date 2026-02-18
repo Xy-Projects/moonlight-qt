@@ -53,7 +53,8 @@
 #define SER_LANGUAGE "language"
 #define SER_COORD_ENABLED "coord_enabled"
 #define SER_COORD_SERVER "coord_server"
-#define SER_COORD_TOKEN "coord_token"
+#define SER_COORD_EMAIL "coord_email"
+#define SER_COORD_PASSWORD "coord_password"
 #define SER_COORD_CLIENT_NAME "coord_client_name"
 
 #define CURRENT_DEFAULT_VER 2
@@ -174,7 +175,8 @@ void StreamingPreferences::reload()
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
     enableCoordination = settings.value(SER_COORD_ENABLED, false).toBool();
     coordinationServerUrl = settings.value(SER_COORD_SERVER, "").toString();
-    coordinationAuthToken = settings.value(SER_COORD_TOKEN, "").toString();
+    coordinationEmail = settings.value(SER_COORD_EMAIL, "").toString();
+    coordinationPassword = settings.value(SER_COORD_PASSWORD, "").toString();
     coordinationClientName = settings.value(SER_COORD_CLIENT_NAME, "").toString();
 
 
@@ -368,7 +370,8 @@ void StreamingPreferences::save()
     settings.setValue(SER_KEEPAWAKE, keepAwake);
     settings.setValue(SER_COORD_ENABLED, enableCoordination);
     settings.setValue(SER_COORD_SERVER, coordinationServerUrl);
-    settings.setValue(SER_COORD_TOKEN, coordinationAuthToken);
+    settings.setValue(SER_COORD_EMAIL, coordinationEmail);
+    settings.setValue(SER_COORD_PASSWORD, coordinationPassword);
     settings.setValue(SER_COORD_CLIENT_NAME, coordinationClientName);
 }
 

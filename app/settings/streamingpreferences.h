@@ -148,7 +148,8 @@ public:
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
     Q_PROPERTY(bool enableCoordination MEMBER enableCoordination NOTIFY enableCoordinationChanged)
     Q_PROPERTY(QString coordinationServerUrl MEMBER coordinationServerUrl NOTIFY coordinationServerUrlChanged)
-    Q_PROPERTY(QString coordinationAuthToken MEMBER coordinationAuthToken NOTIFY coordinationAuthTokenChanged)
+    Q_PROPERTY(QString coordinationEmail MEMBER coordinationEmail NOTIFY coordinationEmailChanged)
+    Q_PROPERTY(QString coordinationPassword MEMBER coordinationPassword NOTIFY coordinationPasswordChanged)
     Q_PROPERTY(QString coordinationClientName MEMBER coordinationClientName NOTIFY coordinationClientNameChanged)
 
     Q_INVOKABLE bool retranslate();
@@ -194,7 +195,8 @@ public:
     CaptureSysKeysMode captureSysKeysMode;
     bool enableCoordination;
     QString coordinationServerUrl;
-    QString coordinationAuthToken;
+    QString coordinationEmail;
+    QString coordinationPassword;
     QString coordinationClientName;
 
 signals:
@@ -235,7 +237,8 @@ signals:
     void languageChanged();
     void enableCoordinationChanged();
     void coordinationServerUrlChanged();
-    void coordinationAuthTokenChanged();
+    void coordinationEmailChanged();
+    void coordinationPasswordChanged();
     void coordinationClientNameChanged();
 
 private:

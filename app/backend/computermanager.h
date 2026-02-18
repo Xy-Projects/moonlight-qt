@@ -254,7 +254,7 @@ signals:
     void computerAddCompleted(QVariant success, QVariant detectedPortBlocking);
 
     void quitAppCompleted(QVariant error);
-    void coordinationSyncCompleted(QVariant error);
+    void coordinationSyncCompleted(QString error);
 
 private slots:
     void handleAboutToQuit();

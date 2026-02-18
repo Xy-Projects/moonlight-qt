@@ -1022,14 +1022,68 @@ void ComputerManager::addNewHost(NvAddress address, bool mdns, QString name, NvA
     QThreadPool::globalInstance()->start(addTask);
 }
 
+static bool coordinationLogin(QNetworkAccessManager& nam,
+                              const QString& serverUrl,
+                              const QString& email,
+                              const QString& password,
+                              QString& authToken,
+                              QString& errorText)
+{
+    QNetworkRequest request(QUrl(serverUrl + "/v1/auth/login"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QJsonObject payload{
+        {"email", email},
+        {"password", password},
+    };
+
+    QNetworkReply* reply = nam.post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    QEventLoop waitLoop;
+    QObject::connect(reply, &QNetworkReply::finished, &waitLoop, &QEventLoop::quit);
+    waitLoop.exec();
+
+    QByteArray body = reply->readAll();
+    if (reply->error() != QNetworkReply::NoError) {
+        errorText = QCoreApplication::translate("ComputerManager", "Coordination login failed: %1")
+                        .arg(reply->errorString());
+        reply->deleteLater();
+        return false;
+    }
+
+    const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    reply->deleteLater();
+    if (statusCode != 200) {
+        errorText = QCoreApplication::translate("ComputerManager", "Coordination login failed with HTTP %1: %2")
+                        .arg(statusCode)
+                        .arg(QString::fromUtf8(body));
+        return false;
+    }
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        errorText = QCoreApplication::translate("ComputerManager", "Coordination login returned invalid JSON");
+        return false;
+    }
+
+    authToken = doc.object().value("token").toString();
+    if (authToken.isEmpty()) {
+        errorText = QCoreApplication::translate("ComputerManager", "Coordination login did not return a token");
+        return false;
+    }
+
+    return true;
+}
+
 class PendingCoordSyncTask : public QObject, public QRunnable
 {
     Q_OBJECT
 
 public:
-    PendingCoordSyncTask(QString serverUrl, QString authToken)
+    PendingCoordSyncTask(QString serverUrl, QString email, QString password)
         : m_ServerUrl(std::move(serverUrl)),
-          m_AuthToken(std::move(authToken))
+          m_Email(std::move(email)),
+          m_Password(std::move(password))
     {
     }
 
@@ -1041,8 +1095,15 @@ private:
     void run() override
     {
         QNetworkAccessManager nam;
+        QString authToken;
+        QString errorText;
+        if (!coordinationLogin(nam, m_ServerUrl, m_Email, m_Password, authToken, errorText)) {
+            emit coordSyncCompleted(errorText);
+            return;
+        }
+
         QNetworkRequest request(QUrl(m_ServerUrl + "/v1/devices"));
-        request.setRawHeader("Authorization", QString("Bearer %1").arg(m_AuthToken).toUtf8());
+        request.setRawHeader("Authorization", QString("Bearer %1").arg(authToken).toUtf8());
         request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
         QNetworkReply* reply = nam.get(request);
@@ -1096,7 +1157,8 @@ private:
     }
 
     QString m_ServerUrl;
-    QString m_AuthToken;
+    QString m_Email;
+    QString m_Password;
 };
 
 class PendingCoordPairTask : public QObject, public QRunnable
@@ -1105,12 +1167,14 @@ class PendingCoordPairTask : public QObject, public QRunnable
 
 public:
     PendingCoordPairTask(QString serverUrl,
-                         QString authToken,
+                         QString email,
+                         QString password,
                          QString targetDeviceId,
                          QString clientName,
                          QString pin)
         : m_ServerUrl(std::move(serverUrl)),
-          m_AuthToken(std::move(authToken)),
+          m_Email(std::move(email)),
+          m_Password(std::move(password)),
           m_TargetDeviceId(std::move(targetDeviceId)),
           m_ClientName(std::move(clientName)),
           m_Pin(std::move(pin))
@@ -1124,8 +1188,15 @@ private:
     void run() override
     {
         QNetworkAccessManager nam;
+        QString authToken;
+        QString errorText;
+        if (!coordinationLogin(nam, m_ServerUrl, m_Email, m_Password, authToken, errorText)) {
+            emit pairRequestQueued(errorText);
+            return;
+        }
+
         QNetworkRequest request(QUrl(m_ServerUrl + "/v1/pair/request"));
-        request.setRawHeader("Authorization", QString("Bearer %1").arg(m_AuthToken).toUtf8());
+        request.setRawHeader("Authorization", QString("Bearer %1").arg(authToken).toUtf8());
         request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
         QJsonObject payload{
@@ -1159,7 +1230,8 @@ private:
     }
 
     QString m_ServerUrl;
-    QString m_AuthToken;
+    QString m_Email;
+    QString m_Password;
     QString m_TargetDeviceId;
     QString m_ClientName;
     QString m_Pin;
@@ -1198,14 +1270,15 @@ QString ComputerManager::coordDeviceIdForComputer(const NvComputer* computer) co
 void ComputerManager::syncCoordinationHosts()
 {
     const QString serverUrl = m_Prefs->coordinationServerUrl.trimmed().trimmed().remove(QRegularExpression("/+$"));
-    const QString authToken = m_Prefs->coordinationAuthToken.trimmed();
+    const QString email = m_Prefs->coordinationEmail.trimmed();
+    const QString password = m_Prefs->coordinationPassword;
 
-    if (!m_Prefs->enableCoordination || serverUrl.isEmpty() || authToken.isEmpty()) {
-        emit coordinationSyncCompleted(tr("Coordination server URL and token are required"));
+    if (!m_Prefs->enableCoordination || serverUrl.isEmpty() || email.isEmpty() || password.isEmpty()) {
+        emit coordinationSyncCompleted(tr("Coordination server URL, email, and password are required"));
         return;
     }
 
-    PendingCoordSyncTask* task = new PendingCoordSyncTask(serverUrl, authToken);
+    PendingCoordSyncTask* task = new PendingCoordSyncTask(serverUrl, email, password);
     connect(task, &PendingCoordSyncTask::coordHostDiscovered, this,
             [this](QString name, QString host, quint16 port, QString deviceId) {
         {
@@ -1263,9 +1336,19 @@ void ComputerManager::maybeAttemptCoordinationPair(NvComputer* computer)
 
     const QString pin = generatePinString();
     const QString serverUrl = m_Prefs->coordinationServerUrl.trimmed().trimmed().remove(QRegularExpression("/+$"));
-    const QString authToken = m_Prefs->coordinationAuthToken.trimmed();
+    const QString email = m_Prefs->coordinationEmail.trimmed();
+    const QString password = m_Prefs->coordinationPassword;
 
-    PendingCoordPairTask* task = new PendingCoordPairTask(serverUrl, authToken, deviceId, clientName, pin);
+    if (serverUrl.isEmpty() || email.isEmpty() || password.isEmpty()) {
+        {
+            QWriteLocker lock(&m_Lock);
+            m_CoordPairInProgress.remove(computerUuid);
+        }
+        emit pairingCompleted(computer, tr("Coordination server URL, email, and password are required"));
+        return;
+    }
+
+    PendingCoordPairTask* task = new PendingCoordPairTask(serverUrl, email, password, deviceId, clientName, pin);
     connect(task, &PendingCoordPairTask::pairRequestQueued, this,
             [this, computer, pin](QString error) {
         if (!error.isEmpty()) {

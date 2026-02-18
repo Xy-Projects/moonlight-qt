@@ -30,7 +30,9 @@
 
 #if defined(Q_OS_WIN32)
 #include "antihookingprotection.h"
+#endif
 
+#if defined(Q_OS_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <dxgi1_6.h>
